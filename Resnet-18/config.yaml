@@ -1,0 +1,39 @@
+1、模型
+model:
+  name: resnet18
+  pretrained: true  # 是否加载预训练权重
+  frozen_layers: [] # 可选：哪些层冻结
+2、lora相关设置
+lora:
+  enabled: true
+  rank: 4                # LoRA 的秩（r 值）
+  alpha: 16              # LoRA scaling 参数（推荐 alpha ≈ 2 × rank）
+  dropout: 0.1           # LoRA dropout 比例
+  target_modules:        # 要插入 LoRA 的模块列表
+    - layer1.0.conv1
+    - layer1.0.conv2
+    - layer2.0.conv1
+    - layer2.0.conv2
+  lora_init: "kaiming"   # 初始化方法（如 kaiming, normal）
+3、数据相关设置
+data:
+  train_path: ../dataset/train
+  val_path: ../dataset/val
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+4、训练相关参数
+training:
+  epochs: 20
+  optimizer: adamw
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  scheduler: cosine
+  warmup_steps: 500
+  gradient_clip: 1.0
+5、实验&输出管理
+output:
+  log_dir: ./logs/res18_lora
+  checkpoint_dir: ./checkpoints/res18_lora
+  save_every: 1  # 每几轮保存一次模型
+

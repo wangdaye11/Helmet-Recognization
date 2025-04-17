@@ -1,0 +1,10 @@
+dataset/
+*.zip
+*.rar
+
+.idea/
+!.idea/modules.xml
+!.idea/misc.xml
+!helmet-lora-detection.iml
+
+.vscode/
