@@ -9,13 +9,17 @@ class LoRAConv2d(nn.Module):
 
         in_channels = original_conv.in_channels
         out_channels = original_conv.out_channels
+        stride = original_conv.stride
+        groups = original_conv.groups
 
-        # 冻结原始卷积
         for param in self.original.parameters():
             param.requires_grad = False
 
-        self.lora_A = nn.Conv2d(in_channels, r, kernel_size=1, bias=False)
-        self.lora_B = nn.Conv2d(r, out_channels, kernel_size=1, bias=False)
+        self.lora_A = nn.Conv2d(in_channels, r, kernel_size=1, stride=1,
+                                padding=0, bias=False, groups=groups)
+        self.lora_B = nn.Conv2d(r, out_channels, kernel_size=1, stride=stride,
+                                padding=0, bias=False, groups=groups)
+
         self.scaling = alpha / r
 
     def forward(self, x):
