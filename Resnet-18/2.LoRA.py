@@ -8,7 +8,6 @@ from lora.layers import LoRAConv2d
 import os
 import time
 import matplotlib.pyplot as plt
-from thop import profile, clever_format
 
 # ----- Configurations -----
 num_classes = 4
@@ -50,21 +49,20 @@ print("Class mapping:", class_names)
 # ----- Initialize model -----
 model = ResNet18WithLoRA(num_classes=num_classes).to(device)
 
-# ----- Parameter stats -----
-dummy_input = torch.randn(1, 3, 224, 224).to(device)
-macs, params = profile(model, inputs=(dummy_input,), verbose=False)
-macs, params = clever_format([macs, params], "%.2f")
-print(f"FLOPs: {macs}, Parameters: {params}")
-
+# --------- Model statistics ---------
 total_params = sum(p.numel() for p in model.parameters())
 trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"Trainable parameters: {trainable_params:,} / {total_params:,}")
+print(f"Trainable parameters: {trainable_params} / {total_params}")
 
-# ----- Training setup -----
+# ----- Optimizer and loss -----
 optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 criterion = nn.CrossEntropyLoss()
 
+# ----- Metrics log -----
 train_acc_history = []
+test_acc_history = []
+train_loss_history = []
+test_loss_history = []
 
 # ----- Training loop -----
 start_time = time.time()
@@ -72,8 +70,8 @@ start_time = time.time()
 for epoch in range(epochs):
     model.train()
     train_correct = 0
-    total_samples = 0
-    running_loss = 0.0
+    train_total = 0
+    train_loss_sum = 0.0
 
     for imgs, labels in train_loader:
         imgs, labels = imgs.to(device), labels.to(device)
@@ -84,44 +82,65 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
 
-        running_loss += loss.item()
+        train_loss_sum += loss.item()
         _, predicted = torch.max(outputs, 1)
         train_correct += (predicted == labels).sum().item()
-        total_samples += labels.size(0)
+        train_total += labels.size(0)
 
-    train_acc = 100 * train_correct / total_samples
-    avg_loss = running_loss / len(train_loader)
-
+    train_acc = 100 * train_correct / train_total
+    train_loss = train_loss_sum / len(train_loader)
     train_acc_history.append(train_acc)
-    print(f"[Epoch {epoch+1}/{epochs}] Loss: {avg_loss:.4f} - Train Acc: {train_acc:.2f}%")
+    train_loss_history.append(train_loss)
+
+    # ----- Evaluation on test -----
+    model.eval()
+    test_correct = 0
+    test_total = 0
+    test_loss_sum = 0.0
+
+    with torch.no_grad():
+        for imgs, labels in test_loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            outputs = model(imgs)
+            loss = criterion(outputs, labels)
+            test_loss_sum += loss.item()
+            _, predicted = torch.max(outputs, 1)
+            test_correct += (predicted == labels).sum().item()
+            test_total += labels.size(0)
+
+    test_acc = 100 * test_correct / test_total
+    test_loss = test_loss_sum / len(test_loader)
+    test_acc_history.append(test_acc)
+    test_loss_history.append(test_loss)
+
+    print(f"[Epoch {epoch+1}/{epochs}] Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%")
 
 elapsed = time.time() - start_time
 print(f"Total training time: {elapsed:.2f} seconds")
 
-# ----- Save LoRA-only weights -----
+# ----- Save model -----
 os.makedirs("checkpoints", exist_ok=True)
 torch.save(model.state_dict(), "checkpoints/resnet18_lora.pth")
 
+# ----- Plot: Loss -----
+plt.figure(figsize=(8, 6))
+plt.plot(range(1, epochs + 1), train_loss_history, label="Train Loss", marker='o')
+plt.plot(range(1, epochs + 1), test_loss_history, label="Test Loss", marker='s')
+plt.title("Loss per Epoch")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.xticks(range(1, epochs + 1))
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("checkpoints/lora_loss_curve.png")
+plt.show()
 
-# ----- Final test evaluation -----
-model.eval()
-test_correct = 0
-test_total = 0
-with torch.no_grad():
-    for imgs, labels in test_loader:
-        imgs, labels = imgs.to(device), labels.to(device)
-        outputs = model(imgs)
-        _, predicted = torch.max(outputs, 1)
-        test_correct += (predicted == labels).sum().item()
-        test_total += labels.size(0)
-
-test_acc = 100 * test_correct / test_total
-print(f"Test Accuracy: {test_acc:.2f}%")
-
-# ----- Plot training accuracy curve -----
+# ----- Plot: accuracy -----
 plt.figure(figsize=(8, 6))
 plt.plot(range(1, epochs + 1), train_acc_history, label="Train Accuracy", marker='o')
-plt.title("LoRA Training Accuracy (Train Only)")
+plt.plot(range(1, epochs + 1), test_acc_history, label="Test Accuracy", marker='s')
+plt.title("Accuracy per Epoch")
 plt.xlabel("Epoch")
 plt.ylabel("Accuracy (%)")
 plt.xticks(range(1, epochs + 1))

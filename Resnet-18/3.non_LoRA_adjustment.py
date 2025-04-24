@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-from base_model.resnet18_base import get_resnet18_base
 import os
 import time
 import matplotlib.pyplot as plt
+from base_model.resnet18_base import get_resnet18_base
 
-# ----- Configuration -----
+# ----- Config -----
 num_classes = 4
 batch_size = 32
 epochs = 5
@@ -18,26 +18,24 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ----- Load base model -----
 model = get_resnet18_base(num_classes=num_classes, pretrained=True)
 
-# Freeze all layers first
+# Freeze all layers
 for param in model.parameters():
     param.requires_grad = False
 
-# Unfreeze only layer4 conv1 and conv2
+# Only unfreeze layer4 conv1/conv2
 for name, module in model.named_modules():
-    if ("layer4.0.conv1" in name or "layer4.0.conv2" in name or
-        "layer4.1.conv1" in name or "layer4.1.conv2" in name):
+    if "layer4.0.conv1" in name or "layer4.0.conv2" in name or \
+       "layer4.1.conv1" in name or "layer4.1.conv2" in name:
         for param in module.parameters():
             param.requires_grad = True
 
 model = model.to(device)
 
-# ----- Data transforms -----
+# ----- Dataset setup -----
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor()
 ])
-
-# ----- Load datasets -----
 train_dataset = datasets.ImageFolder("../dataset/train", transform=transform)
 test_dataset = datasets.ImageFolder("../dataset/test", transform=transform)
 
@@ -47,88 +45,98 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 class_names = train_dataset.classes
 print("Class mapping:", class_names)
 
-# ----- Optimizer and loss -----
-trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-optimizer = optim.Adam(trainable_params, lr=lr)
+# ----- Optimizer & Loss -----
+optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
 criterion = nn.CrossEntropyLoss()
 
-# ----- Statistics -----
+# ----- Stats -----
 total_params = sum(p.numel() for p in model.parameters())
-trainable_params_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"Trainable parameters: {trainable_params_count:,} / {total_params:,}")
-print(f"Using device: {device}")
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Trainable parameters: {trainable_params:,} / {total_params:,}")
 
-# ----- Accuracy logs -----
+# ----- Logs -----
+train_loss_history = []
+test_loss_history = []
 train_acc_history = []
+test_acc_history = []
 
-# ----- Train function -----
-def train_one_epoch(model, dataloader, optimizer, criterion, device):
+# ----- Training loop -----
+start_time = time.time()
+
+for epoch in range(epochs):
     model.train()
-    total_loss = 0
-    correct = 0
-    total = 0
+    train_loss_sum, train_correct, train_total = 0.0, 0, 0
 
-    for inputs, labels in dataloader:
-        inputs, labels = inputs.to(device), labels.to(device)
+    for images, labels in train_loader:
+        images, labels = images.to(device), labels.to(device)
 
         optimizer.zero_grad()
-        outputs = model(inputs)
+        outputs = model(images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item()
-        _, predicted = torch.max(outputs, 1)
-        correct += (predicted == labels).sum().item()
-        total += labels.size(0)
+        train_loss_sum += loss.item()
+        _, preds = torch.max(outputs, 1)
+        train_correct += (preds == labels).sum().item()
+        train_total += labels.size(0)
 
-    acc = 100 * correct / total
-    avg_loss = total_loss / len(dataloader)
-    return avg_loss, acc
+    train_loss = train_loss_sum / len(train_loader)
+    train_acc = 100 * train_correct / train_total
 
-def evaluate(model, dataloader, device):
+    # ---- Test ----
     model.eval()
-    correct = 0
-    total = 0
+    test_loss_sum, test_correct, test_total = 0.0, 0, 0
+
     with torch.no_grad():
-        for inputs, labels in dataloader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs, 1)
-            correct += (predicted == labels).sum().item()
-            total += labels.size(0)
-    return 100 * correct / total
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            test_loss_sum += loss.item()
+            _, preds = torch.max(outputs, 1)
+            test_correct += (preds == labels).sum().item()
+            test_total += labels.size(0)
 
-# ----- Train loop -----
-start_time = time.time()
+    test_loss = test_loss_sum / len(test_loader)
+    test_acc = 100 * test_correct / test_total
 
-for epoch in range(epochs):
-    train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
+    train_loss_history.append(train_loss)
+    test_loss_history.append(test_loss)
     train_acc_history.append(train_acc)
+    test_acc_history.append(test_acc)
 
-    print(f"[Epoch {epoch+1}] Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+    print(f"[Epoch {epoch+1}] Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}% | "
+          f"Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.2f}%")
 
 elapsed = time.time() - start_time
 print(f"Total training time: {elapsed:.2f} seconds")
-
-# ----- Final test -----
-test_acc = evaluate(model, test_loader, device)
-print(f"Test Accuracy: {test_acc:.2f}%")
 
 # ----- Save model -----
 os.makedirs("checkpoints", exist_ok=True)
 torch.save(model.state_dict(), "checkpoints/resnet18_layer4.pth")
 
-# ----- Plot training accuracy -----
-plt.figure(figsize=(8, 6))
+# ----- Plot: loss -----
+plt.figure()
+plt.plot(range(1, epochs + 1), train_loss_history, label="Train Loss", marker='o')
+plt.plot(range(1, epochs + 1), test_loss_history, label="Test Loss", marker='s')
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.title("Train vs Test Loss")
+plt.legend()
+plt.grid(True)
+plt.savefig("checkpoints/layer4_loss_curve.png")
+plt.show()
+
+# ----- Plot: accuracy -----
+plt.figure()
 plt.plot(range(1, epochs + 1), train_acc_history, label="Train Accuracy", marker='o')
-plt.title("Train Accuracy per Epoch")
+plt.plot(range(1, epochs + 1), test_acc_history, label="Test Accuracy", marker='s')
 plt.xlabel("Epoch")
 plt.ylabel("Accuracy (%)")
-plt.xticks(range(1, epochs + 1))
+plt.title("Train vs Test Accuracy")
 plt.ylim(50, 100)
 plt.legend()
 plt.grid(True)
-plt.tight_layout()
 plt.savefig("checkpoints/layer4_accuracy_curve.png")
 plt.show()
